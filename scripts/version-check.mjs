@@ -13,6 +13,7 @@ try {
     console.log(`Last upgrade   : ${result.lastUpgrade || '-'}`);
     console.log(`Upgrade count  : ${result.historyCount || 0}`);
     for (const rel of result.drift) console.log(`[CONFLICT] Modified or missing: ${rel}`);
+    for (const rel of result.preservedDocs || []) console.log(`[PRESERVED DOC] Locally customized: ${rel}`);
     if (result.status === 'legacy-untracked') console.log('Legacy installation; no installed manifest yet.');
   }
   if (result.status === 'version-mismatch' || result.status === 'drift') process.exitCode = 2;

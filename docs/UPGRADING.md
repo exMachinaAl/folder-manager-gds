@@ -39,3 +39,12 @@ Do not run upgrades while FOWS is watching its own source directory; the code fi
 ## Current v0.2.0 feature scope
 
 `scan`, `types`, `search`, `watch`, `sessions`, `diff`, `stats`, `serve`, `doctor`, `version`; native notification + polling reconciliation, with fallback. SQLite, multi-root UI, sorter, cleanup, AI and SFTP are not implemented yet.
+
+
+### v0.2.0 -> v0.3.0
+
+Use the new `FOWS-v0.3.0-UPGRADER-SIBLING` folder beside the existing project.
+Double-click UPGRADER.bat after stopping active watch/serve processes.
+The patch requires a clean v0.2.0-node install-state; it will never replace a
+locally changed managed source file. Data/ is never part of the upgrade payload.
+Use CHECK_VERSION.bat after upgrading, and UPGRADER_RECOVER.bat after interruption.

@@ -1,6 +1,6 @@
 {
   "name": "fows",
-  "version": "0.2.0-node",
+  "version": "0.3.0-node",
   "private": true,
   "type": "module",
   "description": "File Operations & Workspace System: safe, read-only Node.js MVP",

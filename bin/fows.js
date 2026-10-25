@@ -8,8 +8,9 @@ import { Store } from '../lib/store.js';
 import { diffSnapshots, summarizeEvents } from '../lib/diff.js';
 import { runWatch } from '../lib/watch.js';
 import { createFowsServer } from '../lib/server.js';
+import { buildSessionReport, eventsToCsv, reportAsText } from '../lib/report.js';
 
-const HELP = `FOWS v0.2.0-node · read-only File Operations & Workspace System
+const HELP = `FOWS v0.3.0-node · read-only File Operations & Workspace System
 
 Usage: node bin/fows.js COMMAND [options]
 
@@ -21,7 +22,9 @@ Commands:
             [--debounce MS] [--exclude GLOB ...]
   sessions  [--json]
   diff      --session ID|latest [--limit N] [--json]
-  stats     --session ID|latest [--interval 1s|1m|1h] [--json]
+  stats     --session ID|latest [--interval 1s|1m|1h|run] [--json]
+  report    --session ID|latest [--limit N] [--json]
+  export    --session ID|latest [--format json|csv] [--out FILE]
   serve     [--port 8765]  # localhost only, read-only
   doctor    [--json]
   version   [--json]  # installed version + upgrade integrity
@@ -98,9 +101,27 @@ async function main() {
     const id = await selectSession(store, opts.session);
     const intervals = { '1s': 1, '1m': 60, '1h': 3600 };
     const interval = opts.interval || '1m';
-    if (!intervals[interval]) throw new Error('--interval must be 1s, 1m, or 1h');
-    const series = summarizeEvents(await store.readEvents(id), intervals[interval]);
+    if (interval !== 'run' && !intervals[interval]) throw new Error('--interval must be 1s, 1m, 1h, or run');
+    const series = interval === 'run' ? [await buildSessionReport(store,id)] : summarizeEvents(await store.readEvents(id), intervals[interval]);
+    if (interval === 'run') { emit(series[0], opts.json, r => console.log(reportAsText(r, prettyBytes))); return; }
     emit(series, opts.json, data => { console.log(`Observed change events per ${interval} · session ${id}`); if (!data.length) console.log('(no events)'); for (const s of data) console.log(`${s.start} events=${s.count} created=${s.created} modified=${s.modified} deleted=${s.deleted} net=${prettyBytes(s.netBytes)} observed=${prettyBytes(s.observedBytes)}`); });
+  } else if (command === 'report') {
+    const id = await selectSession(store, opts.session);
+    const limit = asPositiveInt(opts.limit, 20, '--limit', {min:1,max:1000});
+    const r = await buildSessionReport(store,id,{top:limit});
+    emit(r, opts.json, data => console.log(reportAsText(data, prettyBytes, limit)));
+  } else if (command === 'export') {
+    const id = await selectSession(store, opts.session);
+    const format = opts.format || 'json';
+    if (!['json','csv'].includes(format)) throw new Error('--format must be json or csv');
+    const report = await buildSessionReport(store,id, {top:1000});
+    const folder = path.join(dataDir, 'exports');
+    const outputPath = path.resolve(opts.out || path.join(folder, `${id}-report.${format}`));
+    // Never overwrite existing export or files via symlinks.
+    await fs.mkdir(path.dirname(outputPath), {recursive:true});
+    const output = format === 'csv' ? eventsToCsv(report) : JSON.stringify(report,null,2)+'\n';
+    await fs.writeFile(outputPath, output, {flag:'wx'});
+    emit({session:id,format,file:outputPath,bytes:Buffer.byteLength(output)}, opts.json, d => console.log(`Exported ${d.format}: ${d.file} (${prettyBytes(d.bytes)})`));
   } else if (command === 'serve') {
     const port = asPositiveInt(opts.port, 8765, '--port', { min: 1, max: 65535 });
     const server = createFowsServer(store);
@@ -113,7 +134,7 @@ async function main() {
     emit(info, opts.json, d => { console.log(`FOWS ${d.version} · ${d.status}`); line('Managed files', d.managedCount); line('Drift', d.drift.length); line('Last upgrade', d.lastUpgrade || '-'); for (const issue of d.drift.slice(0, 20)) console.log(`  [DRIFT] ${issue}`); });
     if (info.status === 'drift' || info.status === 'version-mismatch') process.exitCode = 2;
   } else if (command === 'doctor') {
-    const status = { version: '0.2.0-node', node: process.version, os: `${os.platform()}/${os.arch()}`, dataDir, writable: false };
+    const status = { version: '0.3.0-node', node: process.version, os: `${os.platform()}/${os.arch()}`, dataDir, writable: false };
     try { await fs.mkdir(dataDir, { recursive: true }); await fs.access(dataDir, fs.constants.W_OK); status.writable = true; }
     catch (error) { status.error = error.message; }
     emit(status, opts.json, data => { for (const [k, v] of Object.entries(data)) line(k, v); });
