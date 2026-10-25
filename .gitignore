@@ -1,0 +1,8 @@
+/data/
+/node_modules/
+*.log
+.DS_Store
+
+# Internal FOWS upgrade history/backups; not project source
+/.fows/
+/.fows-upgrade/

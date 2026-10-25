@@ -1,0 +1,15 @@
+{
+  "name": "fows",
+  "version": "0.2.0-node",
+  "private": true,
+  "type": "module",
+  "description": "File Operations & Workspace System: safe, read-only Node.js MVP",
+  "engines": {"node": ">=20.0.0"},
+  "bin": {"fows": "./bin/fows.js"},
+  "scripts": {
+    "start": "node ./bin/fows.js help",
+    "test": "node --test",
+    "doctor": "node ./bin/fows.js doctor"
+  },
+  "license": "MIT"
+}
