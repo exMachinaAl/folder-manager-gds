@@ -1,9 +1,9 @@
 {
   "name": "fows",
-  "version": "0.3.0-node",
+  "version": "0.5.0-node",
   "private": true,
   "type": "module",
-  "description": "File Operations & Workspace System: safe, read-only Node.js MVP",
+  "description": "File Operations & Workspace System: safe Node.js filesystem tracker and controlled copy-based sorter",
   "engines": {"node": ">=20.0.0"},
   "bin": {"fows": "./bin/fows.js"},
   "scripts": {

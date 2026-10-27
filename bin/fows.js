@@ -9,8 +9,11 @@ import { diffSnapshots, summarizeEvents } from '../lib/diff.js';
 import { runWatch } from '../lib/watch.js';
 import { createFowsServer } from '../lib/server.js';
 import { buildSessionReport, eventsToCsv, reportAsText } from '../lib/report.js';
+import { compareSessions } from '../lib/compare.js';
+import { buildSortPreview } from '../lib/sort-preview.js';
+import { workspacePreview, workspaceCreate, planSort, sortCommit, undoOperation, listOperations } from '../lib/operations.js';
 
-const HELP = `FOWS v0.3.0-node · read-only File Operations & Workspace System
+const HELP = `FOWS v0.5.0-node · File Operations & Workspace System
 
 Usage: node bin/fows.js COMMAND [options]
 
@@ -25,12 +28,21 @@ Commands:
   stats     --session ID|latest [--interval 1s|1m|1h|run] [--json]
   report    --session ID|latest [--limit N] [--json]
   export    --session ID|latest [--format json|csv] [--out FILE]
+  compare   --left ID --right ID [--limit N] [--json] # same root only
+  sort-preview --root PATH [--limit N] [--target NAME] [--json] # cached inventory
+  workspace-preview --root PATH --name NAME [--template developer|school|general]
+  workspace-create  --root PATH --name NAME [--template NAME] --yes
+  sort-plan --root PATH [--target NAME]  # fresh scan + content hashes
+  sort-commit --plan OP_ID --yes         # COPIES only; sources untouched
+  operations [--json]                   # operation journal
+  undo --id OP_ID --yes                 # only verified output of own operations
   serve     [--port 8765]  # localhost only, read-only
   doctor    [--json]
   version   [--json]  # installed version + upgrade integrity
   help
 
 Data directory: ./data beside FOWS, override with --data PATH or FOWS_DATA_DIR.
+Sort-copy v0.5 is limited to 1000 top-level files / 2 GiB per plan.
 Note: watch uses periodic snapshots, so very short-lived changes may be missed.
       Values describe observed file sizes, not actual disk reads/writes.
 `;
@@ -122,6 +134,48 @@ async function main() {
     const output = format === 'csv' ? eventsToCsv(report) : JSON.stringify(report,null,2)+'\n';
     await fs.writeFile(outputPath, output, {flag:'wx'});
     emit({session:id,format,file:outputPath,bytes:Buffer.byteLength(output)}, opts.json, d => console.log(`Exported ${d.format}: ${d.file} (${prettyBytes(d.bytes)})`));
+  } else if (command === 'compare') {
+    if (!opts.left || !opts.right) throw new Error('Missing --left ID or --right ID');
+    const left = await selectSession(store, opts.left);
+    const right = await selectSession(store, opts.right);
+    const result = await compareSessions(store, left, right, { limit: asPositiveInt(opts.limit, 100, '--limit', {max:1000}) });
+    emit(result, opts.json, d => {
+      console.log(`Compare ${d.left.id} -> ${d.right.id} (${d.root})`);
+      line('Created', d.comparison.counts.CREATE); line('Modified', d.comparison.counts.MODIFY);
+      line('Deleted', d.comparison.counts.DELETE); line('Net change', prettyBytes(d.comparison.netBytes));
+      for (const e of d.comparison.events) console.log(`  ${e.type.padEnd(6)} ${prettyBytes(e.deltaBytes).padStart(12)} ${e.path}`);
+      if (d.comparison.truncated) console.log('More results; use --limit or --json.');
+    });
+  } else if (command === 'sort-preview') {
+    const snapshot = await store.loadInventory(needRoot(opts));
+    const result = buildSortPreview(snapshot, { limit: asPositiveInt(opts.limit, 100, '--limit', {max:1000}), target: opts.target || 'FOWS-Sorted' });
+    emit(result, opts.json, d => {
+      console.log(`SORT PREVIEW ONLY: ${d.root}`);
+      console.log(`Source inventory: ${d.inventoryAt}`);
+      line('Candidates', d.totalCandidates); line('Collisions', d.collisions);
+      line('Skipped entries', d.skipped);
+      for (const e of d.proposals) console.log(`  [${e.status}] ${e.source} -> ${e.proposal}`);
+      console.log('No file was copied, moved, or deleted.');
+    });
+  } else if (command === 'workspace-preview' || command === 'workspace-create') {
+    if (!opts.name) throw new Error('Missing --name NAME');
+    const arg = {root:needRoot(opts),name:opts.name,template:opts.template || 'developer',dataDir,confirmed:!!opts.yes};
+    const result = command === 'workspace-preview' ? await workspacePreview(arg) : await workspaceCreate(arg);
+    emit(result,opts.json,d => {console.log(JSON.stringify(d,null,2)); if(d.dryRun) console.log('PREVIEW ONLY: use workspace-create ... --yes to create directories.');});
+  } else if (command === 'sort-plan') {
+    const result = await planSort({root:needRoot(opts),target:opts.target || 'FOWS-Sorted',dataDir});
+    emit(result,opts.json,d=>{console.log(`Plan ${d.id}: ${d.files} files / ${prettyBytes(d.bytes)} -> ${d.target}`); console.log(`To copy without deleting sources: node bin/fows.js sort-commit --plan ${d.id} --yes`);});
+  } else if (command === 'sort-commit') {
+    if(!opts.plan) throw new Error('Missing --plan OP_ID');
+    const result=await sortCommit({dataDir,planId:opts.plan,confirmed:!!opts.yes});
+    emit(result,opts.json,d=>{console.log(`Copied ${d.files} files to ${d.target}; operation ${d.id}. Sources were NOT deleted.`);});
+  } else if (command === 'operations') {
+    const result=await listOperations(dataDir);
+    emit(result,opts.json,rows=>{ if(!rows.length) console.log('No operation history'); for(const r of rows) console.log(`${r.id} ${r.kind} ${r.status} ${r.target}`); });
+  } else if (command === 'undo') {
+    if(!opts.id) throw new Error('Missing --id OP_ID');
+    const result=await undoOperation({dataDir,id:opts.id,confirmed:!!opts.yes});
+    emit(result,opts.json,d=>{console.log(`Undo ${d.id}: ${d.status}; removed ${d.removed.length}, preserved ${d.skipped.length} entries`); for(const e of d.skipped) console.log(`  [PRESERVE] ${e.path}: ${e.why}`);});
   } else if (command === 'serve') {
     const port = asPositiveInt(opts.port, 8765, '--port', { min: 1, max: 65535 });
     const server = createFowsServer(store);
@@ -134,7 +188,7 @@ async function main() {
     emit(info, opts.json, d => { console.log(`FOWS ${d.version} · ${d.status}`); line('Managed files', d.managedCount); line('Drift', d.drift.length); line('Last upgrade', d.lastUpgrade || '-'); for (const issue of d.drift.slice(0, 20)) console.log(`  [DRIFT] ${issue}`); });
     if (info.status === 'drift' || info.status === 'version-mismatch') process.exitCode = 2;
   } else if (command === 'doctor') {
-    const status = { version: '0.3.0-node', node: process.version, os: `${os.platform()}/${os.arch()}`, dataDir, writable: false };
+    const status = { version: '0.5.0-node', node: process.version, os: `${os.platform()}/${os.arch()}`, dataDir, writable: false };
     try { await fs.mkdir(dataDir, { recursive: true }); await fs.access(dataDir, fs.constants.W_OK); status.writable = true; }
     catch (error) { status.error = error.message; }
     emit(status, opts.json, data => { for (const [k, v] of Object.entries(data)) line(k, v); });
